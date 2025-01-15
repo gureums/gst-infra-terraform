@@ -34,3 +34,38 @@ resource "aws_subnet" "public_subnets" {
     Name = "Public-Subnet-${element(var.availability_zone, index(var.public_subnet_cidr, each.key))}"
   }
 }
+
+# Private Subnets
+resource "aws_subnet" "private_general_subnets" {
+  for_each               = toset(var.private_subnet_general_cidr)
+  vpc_id                 = aws_vpc.main_vpc.id
+  cidr_block             = each.key
+  availability_zone      = element(var.availability_zone, index(var.private_subnet_general_cidr, each.key))
+  tags = {
+    Name = "Private-General-Subnet-${element(var.availability_zone, index(var.private_subnet_general_cidr, each.key))}"
+  }
+}
+
+# RDS Private Subnets
+resource "aws_subnet" "private_rds_subnets" {
+  for_each               = toset(var.private_subnet_rds_cidr)
+  vpc_id                 = aws_vpc.main_vpc.id
+  cidr_block             = each.key
+  availability_zone      = element(var.availability_zone, index(var.private_subnet_rds_cidr, each.key))
+  tags = {
+    Name = "Private-RDS-Subnet-${element(var.availability_zone, index(var.private_subnet_rds_cidr, each.key))}"
+  }
+}
+
+# ElastiCache Private Subnets
+resource "aws_subnet" "private_elasticache_subnets" {
+  for_each               = toset(var.private_subnet_elasticache_cidr)
+  vpc_id                 = aws_vpc.main_vpc.id
+  cidr_block             = each.key
+  availability_zone      = element(var.availability_zone, index(var.private_subnet_elasticache_cidr, each.key))
+  tags = {
+    Name = "Private-ElastiCache-Subnet-${element(var.availability_zone, index(var.private_subnet_elasticache_cidr, each.key))}"
+  }
+}
+
+

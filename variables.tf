@@ -14,7 +14,7 @@ variable "public_subnet_cidr" {
   default = ["10.0.0.0/20", "10.0.16.0/20"]
 }
 
-variable "private_subnet_cidr" {
+variable "private_subnet_general_cidr" {
   default = ["10.0.32.0/20", "10.0.48.0/20"]
 }
 
