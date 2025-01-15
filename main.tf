@@ -27,7 +27,7 @@ resource "aws_vpc" "main_vpc" {
 resource "aws_internet_gateway" "main_igw" {
   vpc_id = aws_vpc.main_vpc.id
   tags = {
-    Name = "gureum-igw"
+    Name = "IGW"
   }
 }
 
@@ -83,6 +83,22 @@ resource "aws_subnet" "private_rds_subnets" {
   }
 }
 
+# RDS Subnet Group
+resource "aws_db_subnet_group" "rds_subnet_group" {
+  name       = "rds-subnet-group"
+  subnet_ids = [for subnet in aws_subnet.private_rds_subnets : subnet.id]
+  
+  tags = {
+    Name = "RDS-Subnet-Group"
+  }
+}
+
+# RDS Instance
+
+
+
+
+
 # ElastiCache Private Subnets
 resource "aws_subnet" "private_elasticache_subnets" {
   for_each               = toset(var.private_subnet_elasticache_cidr)
@@ -91,6 +107,56 @@ resource "aws_subnet" "private_elasticache_subnets" {
   availability_zone      = element(var.availability_zone, index(var.private_subnet_elasticache_cidr, each.key))
   tags = {
     Name = "Private-ElastiCache-Subnet-${element(var.availability_zone, index(var.private_subnet_elasticache_cidr, each.key))}"
+  }
+}
+
+# ElastiCache Subnet Group
+resource "aws_elasticache_subnet_group" "elasticache_subnet_group" {
+  name       = "elasticache-subnet-group"
+  subnet_ids = [for subnet in aws_subnet.private_elasticache_subnets : subnet.id]
+  
+  tags = {
+    Name = "ElastiCache-Subnet-Group"
+  }
+}
+
+# ElastiCache Cluster
+resource "aws_elasticache_cluster" "elasticache_cluster" {
+  cluster_id           = "my-elasticache-cluster"
+  engine               = "redis"
+  node_type            = "cache.t4g.medium"
+  num_cache_nodes      = 1
+  parameter_group_name = "default.redis7"
+  subnet_group_name    = aws_elasticache_subnet_group.elasticache_subnet_group.name
+  security_group_ids   = [aws_security_group.elasticache_sg.id]
+
+  tags = {
+    Name = "Airflow-Message-Broker"
+  }
+}
+
+# ElastiCache Security Group
+resource "aws_security_group" "elasticache_sg" {
+  name        = "elasticache-sg"
+  description = "Allow Redis access to ElastiCache"
+  vpc_id      = aws_vpc.main_vpc.id
+
+  ingress {
+    from_port   = 6379
+    to_port     = 6379
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"] # VPC CIDR 블록
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "ElastiCache-Security-Group"
   }
 }
 
