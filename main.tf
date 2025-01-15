@@ -46,7 +46,6 @@ resource "aws_subnet" "public_subnets" {
 # NAT Gateway Elastic IPs
 resource "aws_eip" "nat_eips" {
   for_each = toset(var.availability_zone)
-  vpc      = true
   tags = {
     Name = "NAT-EIP-${each.value}"
   }
@@ -93,4 +92,50 @@ resource "aws_subnet" "private_elasticache_subnets" {
   tags = {
     Name = "Private-ElastiCache-Subnet-${element(var.availability_zone, index(var.private_subnet_elasticache_cidr, each.key))}"
   }
+}
+
+# Public Subnet
+resource "aws_route_table" "public_route_table" {
+  vpc_id = aws_vpc.main_vpc.id
+
+  route {
+      cidr_block = "0.0.0.0/0"
+      gateway_id = aws_internet_gateway.main_igw.id
+  }
+
+  tags = {
+      Name = "Public-Route-Table"
+  }
+}
+
+# Public Subnet Association
+resource "aws_route_table_association" "public_subnet_associations" {
+  for_each = aws_subnet.public_subnets
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.public_route_table.id
+}
+
+# Private Subnet
+resource "aws_route_table" "private_route_table" {
+  for_each = aws_nat_gateway.nat_gateways
+
+  vpc_id = aws_vpc.main_vpc.id
+
+  route {
+      cidr_block = "0.0.0.0/0"
+      nat_gateway_id = each.value.id
+  }
+
+  tags = {
+      Name = "Private-Route-Table-${each.key}"
+  }
+}
+
+# Private Subnet Association
+resource "aws_route_table_association" "private_subnet_associations" {
+  for_each = aws_subnet.private_general_subnets
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.private_route_table[element(var.availability_zone, index(var.private_subnet_general_cidr, each.key))].id
 }
