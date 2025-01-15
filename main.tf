@@ -23,6 +23,14 @@ resource "aws_vpc" "main_vpc" {
   }
 }
 
+# Internet Gateway
+resource "aws_internet_gateway" "main_igw" {
+  vpc_id = aws_vpc.main_vpc.id
+  tags = {
+    Name = "gureum-igw"
+  }
+}
+
 # Public Subnets
 resource "aws_subnet" "public_subnets" {
   for_each               = toset(var.public_subnet_cidr)
@@ -32,6 +40,25 @@ resource "aws_subnet" "public_subnets" {
   map_public_ip_on_launch = true
   tags = {
     Name = "Public-Subnet-${element(var.availability_zone, index(var.public_subnet_cidr, each.key))}"
+  }
+}
+
+# NAT Gateway Elastic IPs
+resource "aws_eip" "nat_eips" {
+  for_each = toset(var.availability_zone)
+  vpc      = true
+  tags = {
+    Name = "NAT-EIP-${each.value}"
+  }
+}
+
+# NAT Gateways
+resource "aws_nat_gateway" "nat_gateways" {
+  for_each         = aws_eip.nat_eips
+  allocation_id    = each.value.id
+  subnet_id        = element([for subnet in aws_subnet.public_subnets : subnet.id if subnet.availability_zone == each.key], 0)
+  tags = {
+    Name = "NAT-Gateway-${each.key}"
   }
 }
 
@@ -67,5 +94,3 @@ resource "aws_subnet" "private_elasticache_subnets" {
     Name = "Private-ElastiCache-Subnet-${element(var.availability_zone, index(var.private_subnet_elasticache_cidr, each.key))}"
   }
 }
-
-
