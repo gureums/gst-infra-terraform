@@ -244,3 +244,56 @@ resource "aws_route_table_association" "private_subnet_associations" {
   subnet_id      = each.value.id
   route_table_id = aws_route_table.private_route_table[element(var.availability_zone, index(var.private_subnet_general_cidr, each.key))].id
 }
+
+# S3
+resource "aws_s3_bucket" "bucket_airflow" {
+  bucket = "airflow-datalake-s3"
+
+  tags = {
+    Name = "Airflow Bucket"
+  }
+}
+
+# S3 Public Access
+resource "aws_s3_bucket_public_access_block" "public-access" {
+  bucket = aws_s3_bucket.bucket_airflow.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# S3 Bucket Policy
+resource "aws_s3_bucket_policy" "bucket-policy" {
+  bucket = aws_s3_bucket.bucket_airflow.id
+
+  depends_on = [
+    aws_s3_bucket_public_access_block.public-access
+  ]
+
+  policy = <<POLICY
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Resource": "arn:aws:s3:::${aws_s3_bucket.bucket_airflow.id}/*"
+        }
+    ]
+  }
+  POLICY
+}
+
+# S3 Resource Folder Set
+resource "aws_s3_object" "s3-upload-resource-dirs" {
+  for_each = toset(var.bucket_s3_dirs)
+  bucket = aws_s3_bucket.bucket_airflow.id
+  key    = each.key
+  source = ""
+}

@@ -25,3 +25,7 @@ variable "private_subnet_rds_cidr" {
 variable "private_subnet_elasticache_cidr" {
   default = ["10.0.96.0/24", "10.0.112.0/24"]
 }
+
+variable "bucket_s3_dirs" {
+  default = ["dags/", "scripts/", "data/", "logs/"]
+}
