@@ -29,3 +29,11 @@ variable "private_subnet_elasticache_cidr" {
 variable "bucket_s3_dirs" {
   default = ["dags/", "scripts/", "data/", "logs/"]
 }
+
+variable "ami_id" {
+  default = "ami-0dc44556af6f78a7b"
+}
+
+variable "ec2_public_key" {
+  default = "gureum-host-key.pem"
+}

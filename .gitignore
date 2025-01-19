@@ -38,3 +38,6 @@ terraform.rc
 
 # MAC
 .DS_Store
+
+# secrets
+*.pem

@@ -245,7 +245,7 @@ resource "aws_route_table_association" "private_subnet_associations" {
   route_table_id = aws_route_table.private_route_table[element(var.availability_zone, index(var.private_subnet_general_cidr, each.key))].id
 }
 
-# S3
+# S3 Bucket
 resource "aws_s3_bucket" "bucket_airflow" {
   bucket = "airflow-datalake-s3"
 
@@ -255,7 +255,7 @@ resource "aws_s3_bucket" "bucket_airflow" {
 }
 
 # S3 Public Access
-resource "aws_s3_bucket_public_access_block" "public-access" {
+resource "aws_s3_bucket_public_access_block" "s3_public_access" {
   bucket = aws_s3_bucket.bucket_airflow.id
 
   block_public_acls       = true
@@ -265,11 +265,11 @@ resource "aws_s3_bucket_public_access_block" "public-access" {
 }
 
 # S3 Bucket Policy
-resource "aws_s3_bucket_policy" "bucket-policy" {
+resource "aws_s3_bucket_policy" "s3_bucket_policy" {
   bucket = aws_s3_bucket.bucket_airflow.id
 
   depends_on = [
-    aws_s3_bucket_public_access_block.public-access
+    aws_s3_bucket_public_access_block.s3_public_access
   ]
 
   policy = <<POLICY
@@ -278,7 +278,9 @@ resource "aws_s3_bucket_policy" "bucket-policy" {
     "Statement": [
         {
             "Effect": "Allow",
-            "Principal": "*",
+            "Principal": {
+                "AWS": youruser"
+            },
             "Action": [
                 "s3:GetObject",
                 "s3:PutObject"
@@ -291,9 +293,308 @@ resource "aws_s3_bucket_policy" "bucket-policy" {
 }
 
 # S3 Resource Folder Set
-resource "aws_s3_object" "s3-upload-resource-dirs" {
+resource "aws_s3_object" "s3_upload_resource_dirs" {
   for_each = toset(var.bucket_s3_dirs)
   bucket = aws_s3_bucket.bucket_airflow.id
   key    = each.key
   source = ""
 }
+
+# S3 VPC Endpoint
+resource "aws_vpc_endpoint" "vpc_endpoint_s3" {
+  vpc_id       = aws_vpc.main_vpc.id
+  vpc_endpoint_type = "Gateway"
+  service_name = "com.amazonaws.${var.region}.s3"
+
+  tags = {
+    Name = "s3-vpce"
+  }
+}
+
+# S3 VPC Endpoint Route Table Association
+resource "aws_vpc_endpoint_route_table_association" "vpc_endpoint_asso_rtb_private" {
+  for_each = aws_route_table.private_route_table
+
+  vpc_endpoint_id = aws_vpc_endpoint.vpc_endpoint_s3.id
+  route_table_id = each.value.id
+}
+
+# ---------------------------------------------------------
+# EC2
+# Key Pair 생성
+resource "tls_private_key" "ec2_key" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "aws_key_pair" "ec2_key" {
+  key_name   = "generated-ec2-key"
+  public_key = tls_private_key.ec2_key.public_key_openssh
+}
+
+# 키 파일을 로컬에 저장
+resource "local_file" "private_key" {
+  content  = tls_private_key.ec2_key.private_key_pem
+  filename = "generated-ec2-key.pem"
+}
+
+# EC2 Security Group
+resource "aws_security_group" "ec2_sg_bastion" {
+  name        = "ec2-bastion"
+  vpc_id      = aws_vpc.main_vpc.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "EC2-Security-Group-Bastion"
+  }
+}
+
+# EC2 Instance
+resource "aws_instance" "ec2_instance_bastion" {
+  ami           = var.ami_id
+  instance_type = "t2.micro"
+  key_name      = aws_key_pair.ec2_key.key_name
+  subnet_id     = element([for subnet in aws_subnet.public_subnets : subnet.id], 0)
+  security_groups = [aws_security_group.ec2_sg_bastion.id]
+
+  depends_on = [
+    aws_security_group.ec2_sg_bastion
+  ]
+
+  tags = {
+    Name = "Public-EC2-Instance-Bastion"
+  }
+}
+
+# EC2 EIP
+resource "aws_eip" "ec2_eip" {
+  instance = aws_instance.ec2_instance_bastion.id
+
+  tags = {
+    Name = "EC2-EIP"
+  }
+}
+
+# Security Group for Airflow Instances
+resource "aws_security_group" "airflow_sg" {
+  name        = "airflow-sg"
+  vpc_id      = aws_vpc.main_vpc.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  ingress {
+    from_port   = 6379
+    to_port     = 6379
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  ingress {
+    from_port   = 8793
+    to_port     = 8793
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "Airflow-Security-Group"
+  }
+}
+
+# Airflow Scheduler Instance
+resource "aws_instance" "airflow_scheduler" {
+  depends_on = [
+    aws_security_group.airflow_sg,
+    rds_instance
+  ]
+
+  ami           = var.ami_id
+  instance_type = "t3.medium"
+  key_name      = aws_key_pair.ec2_key.key_name
+  subnet_id     = element([for subnet in aws_subnet.private_general_subnets : subnet.id], 0)
+  security_groups = [aws_security_group.airflow_sg.id]
+
+
+  user_data = <<EOF
+    Content-Type: multipart/mixed; boundary="//"
+    MIME-Version: 1.0
+
+    --//
+    Content-Type: text/cloud-config; charset="us-ascii"
+    MIME-Version: 1.0
+    Content-Transfer-Encoding: 7bit
+    Content-Disposition: attachment; filename="cloud-config.txt"
+
+    #cloud-config
+    cloud_final_modules:
+    - [scripts-user, always]
+
+    --//
+    Content-Type: text/x-shellscript; charset="us-ascii"
+    MIME-Version: 1.0
+    Content-Transfer-Encoding: 7bit
+    Content-Disposition: attachment; filename="userdata.txt"
+
+    #!/bin/bash
+    cd /home/airflow
+    source ./airflow_env/bin/activate
+    export AIRFLOW_HOME=/home/airflow/airflow
+    airflow webserver -p 8080 -D
+    EOF
+
+  tags = {
+    Name = "Airflow-Scheduler"
+  }
+}
+
+# Airflow Worker Instance
+resource "aws_instance" "airflow_worker" {
+  depends_on = [
+    aws_security_group.airflow_sg,
+    rds_instance
+  ]
+  ami           = var.ami_id
+  instance_type = "t3.medium"
+  key_name      = aws_key_pair.ec2_key.key_name
+  subnet_id     = element([for subnet in aws_subnet.private_general_subnets : subnet.id], 0)
+  security_groups = [aws_security_group.airflow_sg.id]
+
+  user_data = <<EOF
+    Content-Type: multipart/mixed; boundary="//"
+    MIME-Version: 1.0
+
+    --//
+    Content-Type: text/cloud-config; charset="us-ascii"
+    MIME-Version: 1.0
+    Content-Transfer-Encoding: 7bit
+    Content-Disposition: attachment; filename="cloud-config.txt"
+
+    #cloud-config
+    cloud_final_modules:
+    - [scripts-user, always]
+
+    --//
+    Content-Type: text/x-shellscript; charset="us-ascii"
+    MIME-Version: 1.0
+    Content-Transfer-Encoding: 7bit
+    Content-Disposition: attachment; filename="userdata.txt"
+
+    #!/bin/bash
+
+    cd /home/airflow
+    source ./airflow_env/bin/activate
+    export AIRFLOW_HOME=/home/airflow/airflow
+    airflow celery worker -D
+    EOF
+
+  tags = {
+    Name = "Airflow-Worker"
+  }
+}
+
+# Airflow Webserver Instance
+resource "aws_instance" "airflow_webserver" {
+  depends_on = [
+    aws_security_group.airflow_sg,
+    rds_instance
+  ]
+  ami           = var.ami_id
+  instance_type = "t3.medium"
+  key_name      = aws_key_pair.ec2_key.key_name
+  subnet_id     = element([for subnet in aws_subnet.private_general_subnets : subnet.id], 0)
+  security_groups = [aws_security_group.airflow_sg.id]
+
+  user_data = <<EOF
+    Content-Type: multipart/mixed; boundary="//"
+    MIME-Version: 1.0
+
+    --//
+    Content-Type: text/cloud-config; charset="us-ascii"
+    MIME-Version: 1.0
+    Content-Transfer-Encoding: 7bit
+    Content-Disposition: attachment; filename="cloud-config.txt"
+
+    #cloud-config
+    cloud_final_modules:
+    - [scripts-user, always]
+
+    --//
+    Content-Type: text/x-shellscript; charset="us-ascii"
+    MIME-Version: 1.0
+    Content-Transfer-Encoding: 7bit
+    Content-Disposition: attachment; filename="userdata.txt"
+
+    #!/bin/bash
+
+    cd /home/airflow
+    source ./airflow_env/bin/activate
+    export AIRFLOW_HOME=/home/airflow/airflow
+    airflow webserver -p 8080 -D
+    EOF
+
+  tags = {
+    Name = "Airflow-Webserver"
+  }
+}
+
+# Airflow Flower Instance
+resource "aws_instance" "airflow_flower" {
+  depends_on = [
+    aws_security_group.airflow_sg,
+    rds_instance
+  ]
+  ami           = var.ami_id
+  instance_type = "t3.medium"
+  key_name      = aws_key_pair.ec2_key.key_name
+  subnet_id     = element([for subnet in aws_subnet.private_general_subnets : subnet.id], 0)
+  security_groups = [aws_security_group.airflow_sg.id]
+
+  user_data = <<EOF
+    #!/bin/bash
+    echo "Starting Airflow Flower setup"
+    EOF
+
+  tags = {
+    Name = "Airflow-Flower"
+  }
+}
+
